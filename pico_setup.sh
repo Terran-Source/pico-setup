@@ -15,7 +15,7 @@ JNUM=4
 # Set it to 1 if you want to skip installing OPENOCD debugger
 SKIP_OPENOCD=0
 # Should we include picoprobe support (which is a Pico acting as a debugger for another Pico)
-INCLUDE_PICOPROBE=0
+INCLUDE_PICOPROBE=1
 
 # Skip installing VS Code & its dependencies
 SKIP_VSCODE=1
@@ -24,6 +24,9 @@ VSCODE_INSIDER=1
 
 # Skip UART installation
 SKIP_UART=1
+
+# Skip micropython installation
+SKIP_MICROPYTHON=0
 
 # Skip dependency installation
 PICO_SETUP_EXCLUDE_DEPS=1
@@ -110,23 +113,6 @@ done
 
 cd $OUTDIR
 
-# Build a couple of examples
-cd "$OUTDIR/pico-examples"
-rm -rf build
-mkdir build
-cd build
-cmake ../ -DCMAKE_BUILD_TYPE=Debug
-
-for e in blink hello_world gpio
-do
-    echo "Building $e"
-    cd $e
-    make -j$JNUM
-    cd ..
-done
-
-cd $OUTDIR
-
 # Picoprobe and picotool
 for REPO in picoprobe picotool
 do
@@ -161,6 +147,29 @@ do
     cd $OUTDIR
 done
 
+cd $OUTDIR
+
+# Build a couple of examples
+cd "$OUTDIR/pico-examples"
+rm -rf build
+mkdir build
+cd build
+cmake ../ -DCMAKE_BUILD_TYPE=Debug
+
+for e in blink hello_world gpio
+do
+    echo "Building $e"
+    cd $e
+    make -j$JNUM
+    if [ -f ${e}.uf2 ]; then
+        # Display built artifact details
+        picotool info -a ${e}.uf2
+    fi
+    cd ..
+done
+
+cd $OUTDIR
+
 if [[ "$SKIP_OPENOCD" == 1 ]]; then
     echo "Won't build OpenOCD"
 else
@@ -170,6 +179,7 @@ else
     OPENOCD_BRANCH="rp2040"
     OPENOCD_CONFIGURE_ARGS="--enable-ftdi --enable-sysfsgpio --enable-bcm2835gpio"
     if [[ "$INCLUDE_PICOPROBE" == 1 ]]; then
+        echo "Building OpenOCD with picoprobe"
         OPENOCD_BRANCH="picoprobe"
         OPENOCD_CONFIGURE_ARGS="$OPENOCD_CONFIGURE_ARGS --enable-picoprobe"
     fi
@@ -180,7 +190,7 @@ else
         git checkout $OPENOCD_BRANCH
         git pull
     else
-        git clone "${GITHUB_PREFIX}openocd${GITHUB_SUFFIX}" -b $OPENOCD_BRANCH --depth=1
+        git clone "${GITHUB_PREFIX}openocd${GITHUB_SUFFIX}" -b $OPENOCD_BRANCH
         cd openocd
     fi
     ./bootstrap
@@ -232,3 +242,34 @@ else
     sudo raspi-config nonint do_serial 2
     echo "You must run sudo reboot to finish UART setup"
 fi
+
+if [[ "$SKIP_MICROPYTHON" == 1 ]]; then
+    echo "Skipping micropython installation"
+else
+    echo "Installing micropython"
+    cd $OUTDIR
+    MICROPYTHON_DIR=micropython
+    GITHUB_MICROPYTHON="https://github.com/micropython/micropython.git"
+    if [ -d $MICROPYTHON_DIR ]; then
+        echo "$MICROPYTHON_DIR already exists so updating..."
+        cd $MICROPYTHON_DIR
+        git checkout master
+        git pull
+    else
+        git clone $GITHUB_MICROPYTHON -b master
+        cd $MICROPYTHON_DIR
+    fi
+
+    # Any submodules
+    git submodule update --init
+
+    # build micropython
+    make -C mpy-cross
+    cd ports/rp2
+    rm -rf build-PICO
+    make
+    # Display built artifact details
+    picotool info -a build-PICO/firmware.uf2
+fi
+
+cd $OUTDIR
